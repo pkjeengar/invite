@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invitation Editor</title>
+<style>
+  :root { --ink:#3a2a20; --mut:#8a7a6c; --acc:#b3541e; --bg:#faf5ef; --card:#ffffff; --line:#e6dbcf; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 15px/1.5 "Segoe UI", system-ui, sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:var(--ink); color:#fff; padding:18px 28px; }
+  header h1 { margin:0 0 4px; font-size:20px; letter-spacing:.5px; }
+  header p { margin:0; color:#d8c8b8; font-size:13px; max-width: 900px; }
+  .toolbar { padding:14px 28px; background:var(--card); border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .toolbar label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--mut); font-weight:600; }
+  .toolbar input[type=text] { font:14px/1.4 "Consolas",monospace; padding:7px 9px; border:1px solid var(--line); border-radius:6px; width:240px; }
+  .buttons { display:flex; gap:8px; flex-wrap:wrap; }
+  button { font:600 13px/1.4 inherit; padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:#fff; color:var(--ink); cursor:pointer; }
+  button:hover { border-color:var(--acc); color:var(--acc); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.primary:hover { filter:brightness(1.08); color:#fff; }
+  .hint { flex-basis:100%; color:var(--mut); font-size:13px; min-height:18px; }
+  .hint.ok { color:#2e7d32; }
+  .hint.err { color:#c62828; }
+  .filters { padding:10px 28px 0; display:flex; gap:16px; align-items:center; }
+  .filters input[type=search] { font:13px inherit; padding:6px 9px; border:1px solid var(--line); border-radius:6px; width:320px; }
+  .filters label { font-size:13px; color:var(--mut); display:flex; gap:6px; align-items:center; }
+  main { padding:8px 28px 60px; max-width:1000px; }
+  fieldset { border:1px solid var(--line); border-radius:10px; background:var(--card); margin:18px 0; padding:14px 16px 6px; }
+  legend { font-weight:700; color:var(--acc); font-size:13px; text-transform:uppercase; letter-spacing:1px; padding:0 6px; }
+  .field { margin:10px 0 16px; }
+  .field .meta { display:flex; justify-content:space-between; gap:10px; margin-bottom:4px; font-size:12px; color:var(--mut); }
+  .field .orig { font-family:"Consolas",monospace; background:#f4ede3; border-radius:4px; padding:1px 6px; word-break:break-all; }
+  .field .count { white-space:nowrap; }
+  textarea { width:100%; min-height:34px; font:13px/1.45 "Segoe UI", system-ui, sans-serif; padding:7px 9px; border:1px solid var(--line); border-radius:6px; resize:vertical; }
+  .url-in, input[type=datetime-local] { width:100%; font:12.5px/1.45 "Consolas",monospace; padding:7px 9px; border:1px solid var(--line); border-radius:6px; }
+  .opt-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; }
+  @media (max-width:760px) { .opt-grid { grid-template-columns:1fr; } }
+  .opt-head { display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin:14px 0 6px; font-weight:700; color:var(--ink); border-top:1px solid var(--line); padding-top:12px; }
+  .opt-head:first-child { border-top:0; padding-top:0; margin-top:2px; }
+  .opt-head small { font-weight:400; color:var(--mut); }
+  .field.changed textarea { border-color:var(--acc); background:#fff8f0; }
+  .field.changed .meta { color:var(--acc); }
+  .other-note { font-size:12px; color:var(--mut); }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Wedding Invitation — Client Editor</h1>
+  <p>Edit any text on the invitation. Each client gets their own static folder + unique URL. The final page is fully generated in your browser — nothing is uploaded anywhere except the folder your own server publishes.</p>
+</header>
+
+<div class="toolbar">
+  <label>Client ID (appears in the URL)
+    <input type="text" id="slug" value="client1" maxlength="40" autocomplete="off" spellcheck="false">
+  </label>
+  <div class="buttons">
+    <button id="btnPublish" class="primary">Publish</button>
+    <button id="btnDownload">Download ZIP</button>
+    <button id="btnSaveJson">Save config JSON</button>
+    <button id="btnLoadJson">Load config JSON</button>
+    <input type="file" id="fileJson" accept="application/json,text/json" hidden>
+    <button id="btnReset">Reset all</button>
+  </div>
+  <div class="hint" id="hint"></div>
+</div>
+
+<div class="filters">
+  <input type="search" id="search" placeholder="Search fields by text…" autocomplete="off">
+  <label><input type="checkbox" id="onlyChanged"> Show only changed</label>
+</div>
+
+<main>
+  <p class="other-note" id="status">Loading fields…</p>
+  <form id="form"></form>
+</main>
+
+<script type="module">
+import { extractFields, buildClientFiles, makeZip, downloadZip, CONTENT_CHUNK, PHOTOS } from './generate.js';
+
+const $ = id => document.getElementById(id);
+const SECTIONS = [
+  { title: 'Couple names', fields: ['Abhishek', 'weds', 'Kanika'] },
+  { title: 'Blessings & parents', fields: ['\u0950 \u0936\u094d\u0930\u0940 \u0917\u0923\u0947\u0936\u093e\u092f \u0928\u092e\n', 'With the heavenly blessings of ', 'Smt. Lata Devi & Sm. Kamal Kapoor', '\u2014\u2014', 'Mrs. Reena & Mr. Rajiv Kapoor'] },
+  { title: 'Invitation', fields: ['INVITE', 'You to join us in the wedding celebrations of', '&', 'Daughter of', 'Mrs. Shalini & Mr. Aakash Mittal,', 'On the following events'] },
+  { title: 'Events — names', fields: ['Mehendi', 'Haldi', 'Cocktail', 'Pre-Wedding', 'Shaadi', 'Reception'] },
+  { title: 'Events — dates', fields: ['Friday, March 7th 2026', 'Friday, March 8th 2026', 'Friday, March 9th 2026', 'Friday, March 10th 2026', 'Friday, March 11th 2026'] },
+  { title: 'Events — venue & time', fields: ['The Savoy, Mussoorie', '6pm Onwards'] },
+  { title: 'Map links', fields: ['See the route', 'See the', 'route', 'Click to open the map'] },
+  { title: 'About the couple', fields: ['MEET THE', 'Bride & Groom', 'We are both so delighted that you are able to join us in celebrating what we hope will be one of the happiest days of our lives. The affection shown to us by so many people since our roka has been incredibly moving, and has touched us both deeply. We would like to take this opportunity to thank everyone most sincerely for their kindness. We are looking forward to see you at the wedding functions.'] },
+  { title: 'RSVP', fields: ['Looking forward to see you', 'Click the link to RSVP'] },
+  { title: 'Things to know', fields: ['Things to know', 'To help you feel at ease and enjoy every moment of the celebrations, we\u2019ve gathered a few thoughtful details we\u2019d love for you to know before the big day.', 'Hashtag', 'While posting photos on social media please use the hashtag - #BadriKiDulhania', 'Weather', 'It will be mostly cloudy with temperature reaching up to 22 degrees at the venue', 'Staff', 'We recommend the nearby lodge called Amba Valley near the venue for the staff members', 'Parking', 'Valet parking for all our guests will be available at the venue'] },
+  { title: 'Social & footer', fields: ['Follow the action', 'Click the link to open Instagram', 'The countdown begins', 'Mittal family is excited that you are able to join us in celebrating what we hope will be one of the happiest days of our lives. '] },
+];
+
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const display = s => esc(s).replace(/\n/g, '\u23ce');
+const san = s => (s || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'client';
+
+const DEFAULT_AUDIO = 'https://framerusercontent.com/assets/q8x7MYVF61gOLfkcxdG7dlXjxw.mp3';
+const DEFAULT_INSTA = 'https://missingpiecedesign.com';
+const DEFAULT_WA = 'https://wa.me/91XXXXXXXXXX';
+const DEFAULT_BUY = 'https://rzp.io/rzp/mountain';
+
+// id of each option input (value read by readAssets)
+const optDefaults = {
+  audio: DEFAULT_AUDIO,
+  mapUrl: 'https://missingpiecedesign.com',
+  instagramUrl: DEFAULT_INSTA,
+  whatsappUrl: DEFAULT_WA,
+  buyUrl: DEFAULT_BUY,
+};
+let countdownDefault = null;
+let photoDefaults = {};
+
+let fields = [];        // unique field strings, first-seen order
+let counts = new Map(); // field -> occurrence count
+let inputs = new Map(); // field -> textarea
+
+function countOccurrences(doc) {
+  const c = new Map();
+  for (const p of doc.querySelectorAll('p.framer-text')) {
+    const t = p.textContent;
+    if (!t || !t.trim()) continue;
+    c.set(t, (c.get(t) || 0) + 1);
+  }
+  return c;
+}
+
+function slugFromUrl() {
+  const m = location.pathname.match(/^\/?client-([^/]+)/);
+  return m ? m[1] : 'client1';
+}
+
+function hint(msg, cls) {
+  const h = $('hint');
+  h.textContent = msg;
+  h.className = 'hint' + (cls ? ' ' + cls : '');
+}
+
+async function init() {
+  try {
+    const html = await (await fetch('./index.html')).text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    fields = extractFields(html).filter(f => !['Buy Now', 'Buy Now '].includes(f) && !f.includes('Missing Piece 2025'));
+    counts = countOccurrences(doc);
+    const chunk = await (await fetch('./runtime/' + CONTENT_CHUNK)).text();
+    const m = chunk.match(/date:`([^`]+)`/);
+    if (m) countdownDefault = m[1];
+    for (const [id, def] of Object.entries(PHOTOS)) {
+      photoDefaults[id] = 'https://framerusercontent.com/images/' + id + '.' + def.ext;
+    }
+  } catch (e) {
+    $('status').textContent = 'Failed to load template: ' + e.message;
+    return;
+  }
+  $('slug').value = slugFromUrl();
+  const form = $('form');
+  form.innerHTML = '';
+
+  const bySection = new Map(SECTIONS.map(s => [s.title, new Set(s.fields)]));
+  const assigned = new Set();
+  for (const s of SECTIONS) {
+    const present = s.fields.filter(f => fields.includes(f));
+    if (!present.length) continue;
+    present.forEach(f => assigned.add(f));
+    form.appendChild(fieldset(s.title, present));
+  }
+  form.appendChild(buildOptionsFieldset());
+  const unassigned = fields.filter(f => !assigned.has(f));
+  if (unassigned.length) {
+    const note = document.createElement('p');
+    note.className = 'other-note';
+    note.textContent = 'Other fields (automatically detected):';
+    form.appendChild(note);
+    form.appendChild(fieldset('Other', unassigned));
+  }
+  $('status').textContent = fields.length + ' editable fields loaded from the template.';
+  applyFilters();
+}
+
+function fieldset(title, list) {
+  const fs = document.createElement('fieldset');
+  const lg = document.createElement('legend');
+  lg.textContent = title;
+  fs.appendChild(lg);
+  for (const f of list) {
+    fs.appendChild(field(f));
+  }
+  return fs;
+}
+
+function field(f) {
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+  wrap.dataset.field = f;
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const orig = document.createElement('span');
+  orig.className = 'orig';
+  orig.textContent = display(f);
+  orig.title = 'Original text — replaces everywhere it appears';
+  const count = document.createElement('span');
+  count.className = 'count';
+  const n = counts.get(f) || 1;
+  count.textContent = 'appears ' + n + (n === 1 ? ' place' : ' places');
+  meta.appendChild(orig);
+  meta.appendChild(count);
+
+  const ta = document.createElement('textarea');
+  ta.value = f;
+  ta.dataset.field = f;
+  ta.addEventListener('input', () => {
+    wrap.classList.toggle('changed', ta.value !== f);
+    applyFilters();
+  });
+
+  wrap.appendChild(meta);
+  wrap.appendChild(ta);
+  inputs.set(f, ta);
+  return wrap;
+}
+
+function optInput(id, type, value, placeholder) {
+  const el = document.createElement('input');
+  el.id = 'opt-' + id;
+  el.type = type;
+  el.className = 'url-in';
+  if (value != null) el.value = value;
+  if (placeholder) el.placeholder = placeholder;
+  return el;
+}
+
+function optBlock(labelText, help, input) {
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const lbl = document.createElement('span');
+  lbl.className = 'orig';
+  lbl.textContent = labelText;
+  meta.appendChild(lbl);
+  if (help) {
+    const h = document.createElement('span');
+    h.className = 'count';
+    h.textContent = help;
+    meta.appendChild(h);
+  }
+  wrap.appendChild(meta);
+  wrap.appendChild(input);
+  return wrap;
+}
+
+function buildOptionsFieldset() {
+  const fs = document.createElement('fieldset');
+  const lg = document.createElement('legend');
+  lg.textContent = 'Options — dates, media & links';
+  fs.appendChild(lg);
+
+  const cd = optInput('countdown', 'datetime-local', countdownDefault && countdownDefault.slice(0, 16));
+  fs.appendChild(optBlock('Countdown target (date & time)', 'live countdown counts down to this moment', cd));
+
+  fs.appendChild(optBlock('Audio URL (background music)', 'replaces the uploaded track + remote source everywhere', optInput('audio', 'text', optDefaults.audio)));
+
+  const ph = document.createElement('div');
+  ph.className = 'opt-head';
+  ph.textContent = 'Photos';
+  const psub = document.createElement('small');
+  psub.textContent = '4 hero + 2 couple portraits — paste your own hosted image URLs';
+  ph.appendChild(psub);
+  fs.appendChild(ph);
+
+  for (const [id, def] of Object.entries(photoDefaults)) {
+    fs.appendChild(optBlock(PHOTOS[id].label, id, optInput('photo-' + id, 'text', def)));
+  }
+
+  const links = document.createElement('div');
+  links.className = 'opt-head';
+  links.textContent = 'Social & links';
+  fs.appendChild(links);
+
+  const mapGrp = document.createElement('div');
+  mapGrp.className = 'opt-grid';
+  mapGrp.appendChild(optBlock('Map / venue link', 'fills the venue button AND every "See the route" link', optInput('mapUrl', 'text', optDefaults.mapUrl)));
+  mapGrp.appendChild(optBlock('Instagram link', 'footer + hero social buttons', optInput('instagramUrl', 'text', optDefaults.instagramUrl)));
+  mapGrp.appendChild(optBlock('WhatsApp / RSVP link', 'RSVP section button', optInput('whatsappUrl', 'text', optDefaults.whatsappUrl)));
+  mapGrp.appendChild(optBlock('Buy / invite link', 'buy & book now buttons', optInput('buyUrl', 'text', optDefaults.buyUrl)));
+  fs.appendChild(mapGrp);
+
+  return fs;
+}
+
+function readAssets() {
+  const a = {};
+  const cd = $('opt-countdown').value;
+  if (cd && (!countdownDefault || cd !== countdownDefault.slice(0, 16))) a.countdownDate = new Date(cd).toISOString();
+  const audio = $('opt-audio').value.trim();
+  if (audio && audio !== DEFAULT_AUDIO) a.audioUrl = audio;
+  const photos = {};
+  for (const id of Object.keys(PHOTOS)) {
+    const v = $('opt-photo-' + id).value.trim();
+    if (v && v !== photoDefaults[id]) photos[id] = v;
+  }
+  if (Object.keys(photos).length) a.photos = photos;
+  if ($('opt-mapUrl').value.trim() !== optDefaults.mapUrl) a.mapUrl = $('opt-mapUrl').value.trim();
+  if ($('opt-instagramUrl').value.trim() !== optDefaults.instagramUrl) a.instagramUrl = $('opt-instagramUrl').value.trim();
+  if ($('opt-whatsappUrl').value.trim() !== optDefaults.whatsappUrl) a.whatsappUrl = $('opt-whatsappUrl').value.trim();
+  if ($('opt-buyUrl').value.trim() !== optDefaults.buyUrl) a.buyUrl = $('opt-buyUrl').value.trim();
+  return a;
+}
+
+function applyFilters() {
+  const q = ($('search').value || '').toLowerCase();
+  const only = $('onlyChanged').checked;
+  for (const [f, ta] of inputs) {
+    const wrap = ta.closest('.field');
+    const changed = ta.value !== f;
+    const match = !q || f.toLowerCase().includes(q) || ta.value.toLowerCase().includes(q);
+    const visible = match && (!only || changed);
+    wrap.classList.toggle('hidden', !visible);
+  }
+}
+
+function collectOverrides() {
+  const overrides = [];
+  for (const f of fields) {
+    const v = inputs.get(f).value;
+    overrides.push([f, v]);
+  }
+  return overrides;
+}
+
+async function build() {
+  const overrides = collectOverrides();
+  const assets = readAssets();
+  hint('Generating client files…');
+  try {
+    const files = await buildClientFiles(overrides, assets);
+    return { files, overrides, assets };
+  } catch (e) {
+    hint('Generation failed: ' + e.message, 'err');
+    throw e;
+  }
+}
+
+function slug() { return san($('slug').value); }
+
+$('btnDownload').addEventListener('click', async () => {
+  const { files } = await build();
+  const zip = makeZip(files);
+  downloadZip(zip, slug());
+  hint('ZIP ready (' + files.length + ' files, ' + (zip.length / 1024).toFixed(0) + ' KB). Deploy the extracted folder to any static host — each client gets its own folder & URL.', 'ok');
+});
+
+$('btnPublish').addEventListener('click', async () => {
+  const id = slug();
+  const { files } = await build();
+  const zip = makeZip(files);
+  hint('Publishing to local server…');
+  try {
+    const res = await fetch('/api/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip', 'X-Client-Slug': id },
+      body: zip,
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || ('HTTP ' + res.status));
+    hint('Published! Open this client at ' + location.origin + out.url, 'ok');
+  } catch (e) {
+    hint('Publish failed: ' + e.message + '. Is server.py running?', 'err');
+  }
+});
+
+$('btnSaveJson').addEventListener('click', () => {
+  const cfg = { slug: slug(), overrides: collectOverrides(), assets: readAssets() };
+  const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'config-' + slug() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  hint('Config JSON downloaded.', 'ok');
+});
+
+$('btnLoadJson').addEventListener('click', () => $('fileJson').click());
+$('fileJson').addEventListener('change', async (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  try {
+    const cfg = JSON.parse(await file.text());
+    if (cfg.slug) $('slug').value = cfg.slug;
+    if (Array.isArray(cfg.overrides)) {
+      for (const [orig, val] of cfg.overrides) {
+        const ta = inputs.get(orig);
+        if (ta) ta.value = val;
+      }
+    }
+    if (cfg.assets) {
+      if (cfg.assets.countdownDate) $('opt-countdown').value = cfg.assets.countdownDate.slice(0, 16);
+      if (cfg.assets.audioUrl) $('opt-audio').value = cfg.assets.audioUrl;
+      if (cfg.assets.photos) for (const [id, url] of Object.entries(cfg.assets.photos)) {
+        if ($('opt-photo-' + id)) $('opt-photo-' + id).value = url;
+      }
+      if (cfg.assets.mapUrl) $('opt-mapUrl').value = cfg.assets.mapUrl;
+      if (cfg.assets.instagramUrl) $('opt-instagramUrl').value = cfg.assets.instagramUrl;
+      if (cfg.assets.whatsappUrl) $('opt-whatsappUrl').value = cfg.assets.whatsappUrl;
+      if (cfg.assets.buyUrl) $('opt-buyUrl').value = cfg.assets.buyUrl;
+    }
+    applyFilters();
+    hint('Config loaded.', 'ok');
+  } catch (e) {
+    hint('Invalid config file: ' + e.message, 'err');
+  }
+  ev.target.value = '';
+});
+
+$('btnReset').addEventListener('click', () => {
+  for (const f of fields) inputs.get(f).value = f;
+  $('opt-countdown').value = countdownDefault ? countdownDefault.slice(0, 16) : '';
+  $('opt-audio').value = optDefaults.audio;
+  for (const [id, url] of Object.entries(photoDefaults)) $('opt-photo-' + id).value = url;
+  $('opt-mapUrl').value = optDefaults.mapUrl;
+  $('opt-instagramUrl').value = optDefaults.instagramUrl;
+  $('opt-whatsappUrl').value = optDefaults.whatsappUrl;
+  $('opt-buyUrl').value = optDefaults.buyUrl;
+  applyFilters();
+  hint('Reset to original template.', 'ok');
+});
+
+$('search').addEventListener('input', applyFilters);
+$('onlyChanged').addEventListener('change', applyFilters);
+
+init().then(() => {
+  const q = new URLSearchParams(location.search);
+  if (q.has('autopublish')) {
+    setTimeout(() => { $('btnPublish').click(); }, 300);
+  }
+});
+</script>
+</body>
+</html>
